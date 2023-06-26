@@ -79,28 +79,28 @@ fn main() -> Result<()> {
                 .find(|file| !file.starts_with(&args.work_dir))
             {
                 ignored_files.push(format!(
-                    "{:?} = {:?}",
-                    working_file.strip_prefix(&args.work_dir).unwrap(),
-                    existing_file.strip_prefix(&args.root).unwrap()
+                    "{} = {}",
+                    working_file.strip_prefix(&args.work_dir).unwrap().display(),
+                    existing_file.strip_prefix(&args.root).unwrap().display()
                 ));
             } else {
-                let file_name = working_file.file_name().unwrap().to_str().unwrap();
+                let mut file_name = working_file.file_name().unwrap().to_string_lossy();
+
+                if args.rename {
+                    file_name = format!("{hash}_{file_name}").into();
+                }
+
                 let mut out_file = PathBuf::new();
 
                 out_file.push(&out_dir);
-
-                if args.rename {
-                    out_file.push(format!("{hash}_{file_name}"));
-                } else {
-                    out_file.push(file_name);
-                }
+                out_file.push(file_name.as_ref());
 
                 copy(working_file, out_file)?;
 
                 working_files.for_each(|file| {
                     ignored_files.push(format!(
-                        "{:?} = {:?}",
-                        file.strip_prefix(&args.work_dir).unwrap(),
+                        "{} = {}",
+                        file.strip_prefix(&args.work_dir).unwrap().display(),
                         file_name
                     ));
                 });

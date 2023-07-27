@@ -1,6 +1,6 @@
 [package]
 name = "uniq"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -10,5 +10,4 @@ md5 = "0.7"
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = "z"
 strip = true

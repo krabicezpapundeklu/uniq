@@ -53,8 +53,17 @@ fn main() -> Result<()> {
     create_dir_all(&out_dir)?;
 
     let mut hashed_files = HashMap::new();
+    let mut files = 0;
+
+    eprintln!("Hashing files...");
 
     visit_files(&args.root, &mut |file| {
+        files += 1;
+
+        if files % 100 == 0 {
+            eprintln!("... {files}");
+        }
+
         let body = read(&file)?;
         let hash = format!("{:X}", compute(body));
         let same_files = hashed_files.entry(hash).or_insert_with(Vec::new);
@@ -63,6 +72,8 @@ fn main() -> Result<()> {
 
         Ok(())
     })?;
+
+    eprintln!("Hashed {files} files and doing the real work now...");
 
     let mut ignored_files = Vec::new();
 
@@ -113,6 +124,8 @@ fn main() -> Result<()> {
     for ignored_file in ignored_files {
         println!("{ignored_file}");
     }
+
+    eprintln!("... aaaand done :-)");
 
     Ok(())
 }

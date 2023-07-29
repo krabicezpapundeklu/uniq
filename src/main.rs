@@ -178,6 +178,20 @@ fn main() -> Result<()> {
                 out_file.push(&out_dir);
                 out_file.push(file_name.as_ref());
 
+                if !args.rename && out_file.exists() {
+                    file_name = format!("{hash}_{file_name}").into();
+
+                    out_file.pop();
+                    out_file.push(file_name.as_ref());
+
+                    eprintln!(
+                        "File {} is unique, but {} already exists in output directory. Renaming to {}.",
+                        working_file.strip_prefix(&args.work_dir).unwrap().display(),
+                        working_file.file_name().unwrap().to_string_lossy(),
+                        file_name
+                    );
+                }
+
                 copy(working_file, out_file)?;
 
                 working_files.for_each(|file| {

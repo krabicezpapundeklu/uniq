@@ -1,27 +1,94 @@
 use std::{
     collections::HashMap,
-    fs::{copy, create_dir_all, read, read_dir},
-    io::Result,
+    fs::{copy, create_dir_all, read_dir, File, ReadDir},
+    io::{Read, Result},
     path::{Path, PathBuf},
     process::exit,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use clap::Parser;
-use md5::compute;
+use md5::Context;
+use rayon::prelude::*;
 
 #[derive(Parser)]
+#[command(version)]
 struct Args {
-    #[arg(long)]
+    #[arg(long, short)]
     root: PathBuf,
 
-    #[arg(long)]
+    #[arg(default_value = ".", long, short)]
     work_dir: PathBuf,
 
-    #[arg(long)]
+    #[arg(long, short)]
     out_dir: Option<PathBuf>,
 
-    #[arg(default_value_t = false, long)]
+    #[arg(default_value_t = false, long, short = 'R')]
     rename: bool,
+}
+
+struct FileIterator {
+    dirs: Vec<ReadDir>,
+}
+
+impl FileIterator {
+    fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Ok(Self {
+            dirs: vec![read_dir(path)?],
+        })
+    }
+}
+
+impl Iterator for FileIterator {
+    type Item = Result<PathBuf>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let dir = self.dirs.last_mut()?;
+
+            if let Some(entry) = dir.next() {
+                match entry {
+                    Ok(entry) => {
+                        let path = entry.path();
+
+                        if path.is_dir() {
+                            match read_dir(path) {
+                                Ok(dir) => {
+                                    self.dirs.push(dir);
+                                }
+                                Err(error) => return Some(Err(error)),
+                            }
+                        } else {
+                            return Some(Ok(path));
+                        }
+                    }
+                    Err(error) => return Some(Err(error)),
+                }
+            } else {
+                self.dirs.pop();
+            }
+        }
+    }
+}
+
+fn hash<P: AsRef<Path>>(path: P) -> Result<(P, String)> {
+    let mut file = File::open(&path)?;
+    let mut buffer = [0; 4 * 1024];
+    let mut context = Context::new();
+
+    loop {
+        let read = file.read(&mut buffer)?;
+
+        if read > 0 {
+            context.consume(&buffer[..read]);
+        } else {
+            break;
+        }
+    }
+
+    let hash = format!("{:x}", context.compute());
+
+    Ok((path, hash))
 }
 
 fn main() -> Result<()> {
@@ -48,32 +115,37 @@ fn main() -> Result<()> {
 
     let out_dir = args
         .out_dir
-        .unwrap_or_else(|| args.work_dir.with_extension("out"));
+        .unwrap_or_else(|| args.work_dir.with_extension("uniq"));
 
     create_dir_all(&out_dir)?;
 
-    let mut hashed_files = HashMap::new();
-    let mut files = 0;
-
     eprintln!("Hashing files...");
 
-    visit_files(&args.root, &mut |file| {
-        files += 1;
+    let files = AtomicUsize::new(0);
 
-        if files % 100 == 0 {
-            eprintln!("... {files}");
-        }
+    let file_hashes = FileIterator::new(&args.root)?
+        .par_bridge()
+        .map(|path| path.and_then(hash))
+        .inspect(|_| {
+            let files = files.fetch_add(1, Ordering::Relaxed) + 1;
 
-        let body = read(&file)?;
-        let hash = format!("{:X}", compute(body));
-        let same_files = hashed_files.entry(hash).or_insert_with(Vec::new);
+            if files % 100 == 0 {
+                eprintln!("...{files}");
+            }
+        })
+        .collect::<Vec<_>>();
 
-        same_files.push(file);
+    eprintln!(
+        "Hashed {} files and doing the real work now...",
+        file_hashes.len()
+    );
 
-        Ok(())
-    })?;
+    let mut hashed_files = HashMap::new();
 
-    eprintln!("Hashed {files} files and doing the real work now...");
+    for file_hash in file_hashes {
+        let (path, hash) = file_hash?;
+        hashed_files.entry(hash).or_insert_with(Vec::new).push(path);
+    }
 
     let mut ignored_files = Vec::new();
 
@@ -126,23 +198,6 @@ fn main() -> Result<()> {
     }
 
     eprintln!("... aaaand done :-)");
-
-    Ok(())
-}
-
-fn visit_files<F>(path: &Path, f: &mut F) -> Result<()>
-where
-    F: FnMut(PathBuf) -> Result<()>,
-{
-    for entry in read_dir(path)? {
-        let path = entry?.path();
-
-        if path.is_dir() {
-            visit_files(&path, f)?;
-        } else {
-            f(path)?;
-        }
-    }
 
     Ok(())
 }
